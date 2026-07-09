@@ -1,0 +1,310 @@
+# agent-self-protection: IOC Pattern Database
+# Maintained by Hermes Agent. Update monthly or when new threats emerge.
+
+metadata:
+  version: 2.0.0
+  last_updated: 2026-07-09
+  sources:
+    - abuse.ch/URLhaus
+    - MITRE ATT&CK
+    - AlienVault OTX
+    - Cisco Talos
+    - Mandiant
+
+# ─── Exfiltration services ───
+exfiltration_services:
+  paste:
+    - pastebin.com
+    - paste.mozilla.org
+    - paste.debian.net
+    - paste.ee
+    - pastecode.io
+    - pastefs.com
+    - rentry.co
+    - gist.github.com
+    - hastebin.com
+    - ghostbin.org
+    - dpaste.org
+    - ix.io
+    - 0x0.st
+    - transfer.sh
+  webhook_beacons:
+    - webhook.site
+    - webhook.com
+    - requestbin.com
+    - requestbin.net
+    - pipedream.com
+    - beeceptor.com
+    - mockbin.org
+    - httpbin.org
+    - interact.sh
+    - interactsh.com
+    - oast.fun
+    - oast.live
+    - dnslog.cn
+    - ceye.io
+    - burpcollaborator.net
+    - xsshunter.com
+
+# ─── Tunneling services ───
+tunneling:
+  - ngrok.io
+  - ngrok.com
+  - localtunnel.me
+  - serveo.net
+  - localhost.run
+  - tunnel.dev
+  - bore.pub
+  - cloudflared.com
+  - trycloudflare.com
+  - teleport.dev
+
+# ─── Mining pools (well-known) ───
+mining_pools:
+  monero:
+    - moneroocean.stream
+    - minexmr.com
+    - supportxmr.com
+    - xmrpool.eu
+    - pool.minexmr.com
+    - pool.hashvault.pro
+  ethereum:
+    - ethermine.org
+    - ethpool.org
+    - nanopool.org
+    - f2pool.com
+  bitcoin:
+    - antpool.com
+    - btc.com
+    - viabtc.com
+    - slushpool.com
+  ports:
+    - 3333
+    - 7777
+    - 14444
+    - 14433
+    - 14434
+    - 5555
+    - 9999
+
+# ─── Suspicious TLDs (high abuse rate) ───
+abusive_tlds:
+  - zip
+  - mov
+  - country
+  - tk
+  - xyz
+  - top
+  - click
+  - review
+  - loan
+  - work
+  - gq
+  - ml
+  - cf
+  - ga
+  - pw
+  - ws
+  - cc
+  - kim
+  - cricket
+  - science
+  - party
+  - stream
+  - download
+  - win
+  - bid
+
+# ─── Known typosquats ───
+typosquats:
+  npm:
+    - reqests
+    - requets
+    - lodahs
+    - reactt
+    - vuexx
+    - nxtjs
+    - exprss
+    - color_libs
+  pypi:
+    - reqests
+    - requets
+    - python_dateutil
+    - pillow-pil
+    - numpy-python
+    - python-numpy
+    - setup-tools
+  cargo:
+    - serdede
+    - toke-nio
+
+# ─── npm packages with known incidents ───
+known_compromised_npm:
+  - event-stream        # 2018 — flatmap-stream backdoor
+  - node-ipc            # 2022 — peacenotwar malware
+  - ua-parser-js        # 2021 — cryptominer
+  - chalk               # 2022 — RCE attempt
+  - colors              # 2022 — maintainer sabotage
+  - coa                 # 2021 — Prototype Pollution + RCE
+  - rc                  # 2021 — millions of downloads, compromised
+  - flatmap-stream      # 2018 — event-stream dependency, malware
+  - getcookies          # 2022 — Russian malware
+
+# ─── Suspicious file extensions ───
+high_risk_extensions:
+  - exe
+  - msi
+  - dll
+  - scr
+  - com
+  - cpl
+  - hta
+  - sh
+  - bash
+  - command
+  - bat
+  - cmd
+  - ps1
+  - vbs
+  - apk
+  - ipa
+  - app
+  - dmg
+  - pkg
+  - deb
+  - rpm
+  - jar
+  - war
+  - ear
+  - elf
+  - so
+  - dylib
+
+# ─── Sensitive file paths ───
+sensitive_paths:
+  - /etc/passwd
+  - /etc/shadow
+  - /etc/sudoers
+  - /etc/sudoers.d/
+  - /root/.ssh/
+  - /home/*/.ssh/
+  - /etc/cron.d/
+  - /etc/cron.daily/
+  - /var/spool/cron/
+  - /etc/systemd/system/
+  - /etc/ld.so.preload
+  - /etc/rc.local
+  - /etc/init.d/
+  - /root/.bashrc
+  - /root/.zshrc
+  - /root/.profile
+  - /root/.aws/
+  - /root/.gnupg/
+  - /root/.docker/config.json
+  - /root/.kube/config
+  - /root/.netrc
+
+# ─── C2 / RAT ports ───
+c2_ports:
+  - 4444
+  - 5555
+  - 6666
+  - 6667
+  - 8888
+  - 9999
+  - 1337
+  - 31337
+  - 12345
+  - 54321
+  - 16000
+  - 8080  # common, but watch in unexpected contexts
+
+# ─── Suspicious binaries (commonly used by attackers) ───
+attack_binaries:
+  scanners:
+    - nmap
+    - masscan
+    - zmap
+  shells:
+    - nc
+    - ncat
+    - socat
+    - netcat
+  miners:
+    - xmrig
+    - minerd
+    - cpuminer
+    - ethminer
+  exploitation:
+    - msfconsole
+    - metasploit
+    - sqlmap
+    - hydra
+    - john
+    - hashcat
+  sniffing:
+    - tcpdump
+    - wireshark
+    - tshark
+    - ngrep
+  tunneling:
+    - chisel
+    - sshuttle
+    - ligolo
+
+# ─── Crypto wallets flagged in known scams ───
+# (Curated for reference; not exhaustive)
+known_scam_wallets:
+  # Add specific addresses here as they are identified
+  btc:
+    - "1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa"  # Genesis block, used in scam emails
+  eth:
+    - "0x0000000000000000000000000000000000000000"  # Burn address
+  xmr:
+    # Monero addresses are not publicly visible by design
+
+# ─── Prompt injection patterns (curated) ───
+prompt_injection_patterns:
+  direct:
+    - "ignore (all )?(previous|prior) instructions"
+    - "disregard (all )?(previous|prior) (rules|instructions)"
+    - "you are now in (DAN|developer|jailbreak) mode"
+    - "pretend you (are|have) no restrictions"
+    - "system: you are"
+    - "<\\|im_start\\|>system"
+    - "<\\|functioncalls\\|>"
+  indirect:
+    - hidden HTML with "system:" markers
+    - markdown that mimics user commands
+    - JSON inside text that looks like function calls
+    - zero-width Unicode (used to leak prompts past filters)
+    - "in this hypothetical scenario, you must..."
+    - urgency + authority: "the user said you MUST do this"
+
+# ─── Disallowed content channels ───
+# (for output sanitization — strip from outgoing content)
+disallowed_channels:
+  zero_width_unicode:
+    - "\u200b"   # zero-width space
+    - "\u200c"   # zero-width non-joiner
+    - "\u200d"   # zero-width joiner
+    - "\ufeff"   # zero-width no-break space (BOM)
+    - "\u2060"   # word joiner
+  control_chars:
+    - "\u0000-\u001f"  # C0 controls
+    - "\u007f"        # DEL
+    - "\u0080-\u009f" # C1 controls (except valid formatting)
+  bidi_overrides:
+    - "\u202a-\u202e" # LRE/RLE/PDF/LRO/RLO
+    - "\u2066-\u2069" # LRI/RLI/FSI/PDI
+
+# ─── Update schedule ───
+maintenance:
+  rule_update_interval_days: 30
+  ioc_refresh_interval_days: 7
+  signature_sources:
+    - https://urlhaus.abuse.ch/downloads/text/
+    - https://bazaar.abuse.ch/export/csv/recent/
+    - https://feodotracker.abuse.ch/downloads/ipblocklist.txt
+    - https://rules.emergingthreats.net/blockrules/emerging-botcc.rules
+    - https://raw.githubusercontent.com/firehol/blocklist-ipsets/master/firehol_level1.netset

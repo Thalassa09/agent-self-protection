@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual envs
+venv/
+.venv/
+env/
+
+# Quarantine database and isolated files (runtime artifacts, not source)
+quarantine/
+*.db
+*.db-journal
+
+# Test files (created during testing, not part of the skill)
+/tmp/sp-test/
+/tmp/subagent-test*
+/tmp/clean_file*
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Hermes internal
+.hermes/
