@@ -308,8 +308,40 @@ def check_dns(domain: str) -> Dict:
 # Package registry checks (npm, PyPI)
 # ──────────────────────────────────────────────────────────────────────
 
+# ──────────────────────────────────────────────────────────────────────
+# Typosquatting check
+# ──────────────────────────────────────────────────────────────────────
+
+POPULAR_NPM = {"react", "lodash", "express", "chalk", "commander", "tslib", "vue", "axios", "moment", "uuid", "dotenv", "webpack", "typescript", "minimist", "debug", "request", "jquery"}
+POPULAR_PYPI = {"requests", "numpy", "pandas", "pip", "cryptography", "urllib3", "jinja2", "scipy", "django", "flask", "pytest", "boto3", "tqdm", "six", "pyyaml", "requests-mock", "virtualenv", "setup"}
+
+def levenshtein_distance(s1: str, s2: str) -> int:
+    if len(s1) < len(s2):
+        return levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    return previous_row[-1]
+
 def check_npm(pkg: str) -> Dict:
     result = {"package": pkg, "issues": [], "data": {}}
+    
+    # Typosquat check
+    if pkg not in POPULAR_NPM:
+        for pop in POPULAR_NPM:
+            dist = levenshtein_distance(pkg, pop)
+            if dist == 1:
+                result["issues"].append(f"Suspicious package name: highly similar to popular npm package '{pop}' (edit distance 1)")
+                break
+
     if not HAS_REQUESTS:
         result["issues"].append("requests not installed")
         return result
@@ -357,6 +389,15 @@ def check_npm(pkg: str) -> Dict:
 
 def check_pypi(pkg: str) -> Dict:
     result = {"package": pkg, "issues": [], "data": {}}
+    
+    # Typosquat check
+    if pkg not in POPULAR_PYPI:
+        for pop in POPULAR_PYPI:
+            dist = levenshtein_distance(pkg, pop)
+            if dist == 1:
+                result["issues"].append(f"Suspicious package name: highly similar to popular PyPI package '{pop}' (edit distance 1)")
+                break
+
     if not HAS_REQUESTS:
         result["issues"].append("requests not installed")
         return result

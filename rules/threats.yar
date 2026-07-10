@@ -270,3 +270,34 @@ rule PrivEsc_SUID
     condition:
         any of them
 }
+
+rule CobaltStrike_Beacon
+{
+    meta:
+        description = "Cobalt Strike beacon signatures"
+        author = "agent-self-protection"
+        severity = "critical"
+    strings:
+        $c2_beacon = "beacon.dll" ascii nocase
+        $c2_ref = "CobaltStrike" ascii nocase
+        $c2_inject = "ReflectiveLoader" ascii
+        $c2_pipe = "\\\\.\\pipe\\msagent_" ascii
+    condition:
+        any of them
+}
+
+rule Mimikatz_LSASS
+{
+    meta:
+        description = "Mimikatz credential dumping tool indicators"
+        author = "agent-self-protection"
+        severity = "critical"
+    strings:
+        $mimi_ref = "mimikatz" ascii nocase
+        $mimi_cmd = "sekurlsa::logonpasswords" ascii nocase
+        $mimi_dump = "sekurlsa::minidump" ascii nocase
+        $mimi_crypt = "cryptdll.dll" ascii nocase
+        $lsass_dump = "lsass.exe" ascii nocase
+    condition:
+        any of ($mimi_ref, $mimi_cmd, $mimi_dump) or ($mimi_crypt and $lsass_dump)
+}

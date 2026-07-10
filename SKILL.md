@@ -1,7 +1,7 @@
 ---
 name: agent-self-protection
 description: "Full-spectrum defensive layer for the Hermes Agent — multi-engine malware scanning (ClamAV/YARA/entropy/hash), static code analysis (reverse shells, obfuscation, exfiltration), network exfiltration detection, credential leakage scanning, runtime behavioral monitoring, sandboxed execution, and reputation intelligence (URLhaus/VirusTotal/WHOIS). Activates automatically before browsing, downloading, cloning, installing, or executing any untrusted content."
-version: 2.0.0
+version: 3.0.0
 author: Hermes Agent (commissioned by Thalassa)
 license: MIT
 platforms: [linux, macos, windows, wsl]
@@ -11,7 +11,7 @@ metadata:
     related_skills: [bughunter, credential-auth-safety, skill-security-management, requesting-code-review, 9router-administration]
 ---
 
-# Agent Self-Protection v2 🛡️
+# Agent Self-Protection v3 🛡️
 
 > **Mission**: Make the agent invulnerable to compromise from the outside world.
 > Every byte that crosses the agent's boundary is suspect until proven safe.
@@ -457,6 +457,10 @@ These came from real bugs during the v2 build. Future maintainers should not hav
 19. **`delegate_safe.py` must fail-closed, not fail-open** — the wrapper refuses to delegate if the security prefix file is missing or suspiciously short (<500 chars). Do NOT add a `--force` or `--skip-prefix` flag. A sub-agent without the security protocol is a backdoor by definition; making it easy to bypass defeats the purpose.
 
 20. **Test the preflight pipeline with synthesized malicious samples, not just clean files** — a preflight that returns "clean" on `echo hello` is not validated; you also need it to return "HIGH RISK" on a synthetic reverse shell, "MALICIOUS" on a synthetic credential file, etc. Suggested fixture set: `reverse-shell.sh` (`bash -i >& /dev/tcp/`), `exfil.py` (`open('/root/.ssh/id_rsa')` + `requests.post(webhook.site)`), `creds.py` (AWS key + Slack token), `injected.md` (prompt-injection phrases + ChatML markers), `miner.sh` (xmrig + stratum+tcp://), and `clean.sh` (benign baseline).
+
+21. **preflight.sh must `exit $RISK` explicitly — bash does not propagate the risk variable as the exit code automatically.** During testing, `run_check` correctly set `RISK=2` when `static_analyzer.py` detected a reverse shell, but the script ended with an implicit `exit 0`. Callers branching on `$?` saw `0` (SAFE) even though the summary said "🚨 HIGH RISK". Always end `preflight.sh` with `exit $RISK` after the summary block. Verify with: `bash preflight.sh /tmp/reverse-shell.sh; echo $?` → must be `2`, and `bash preflight.sh /tmp/clean.sh; echo $?` → must be `0`.
+
+22. **GitHub push protection blocks security skill repos that contain credential test fixtures.** When pushing this skill to GitHub, the push was rejected because `references/preflight-test-fixtures.md` contained `xoxb-1234567890-...` (Slack token pattern) and `AKIAIOSFODNN7EXAMPLE` (AWS canonical docs example — GitHub's scanner flags even this). **Fix**: redact test fixtures to `[REDACTED-SLACK-TOKEN-PATTERN]` / `AKIA[REDACTED-AWS-EXAMPLE]` markers while documenting the regex shape (`xox[bpoa]-[0-9]{10,}`, `AKIA[0-9A-Z]{16}`) in comments. Never commit real-looking credentials, even as test data — use the `[REDACTED:TYPE]` convention from the output_sanitizer. Run `python3 scripts/credential_scanner.py` on the entire repo before pushing as a self-scan gate.
 
 ---
 

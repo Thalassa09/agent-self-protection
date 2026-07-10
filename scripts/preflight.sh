@@ -34,15 +34,15 @@ run_check() {
     exit_code=$?
     # Always show output briefly
     echo "$output" | head -8 | sed 's/^/      /'
-    if echo "$output" | grep -qE "(MALICIOUS|🚨)"; then
+    if [ $exit_code -eq 2 ] || echo "$output" | grep -qE "(MALICIOUS|🚨|CRITICAL)"; then
         red "    ✗ THREAT DETECTED (exit $exit_code)"
         RISK=2
         WARN+=("$label: malicious")
-    elif echo "$output" | grep -qE "(SUSPICIOUS|⚠|CAUTION|WARN)"; then
+    elif [ $exit_code -eq 1 ] || echo "$output" | grep -qE "(SUSPICIOUS|⚠|CAUTION|WARN)"; then
         yellow "    ! CAUTION (exit $exit_code)"
         [ $RISK -lt 1 ] && RISK=1
         WARN+=("$label: caution")
-    elif [ $exit_code -gt 1 ]; then
+    elif [ $exit_code -gt 2 ]; then
         yellow "    ? Check failed (exit $exit_code)"
     else
         green "    ✓ Clean"
@@ -119,7 +119,7 @@ case "${1:-}" in
         echo ""
 
         # Layer 1: Malware scan
-        run_check "python3 '$SCRIPT_DIR/malware_scan.py' '$FILE' --format text 2>/dev/null" "Multi-engine malware scan"
+        run_check "python3 '$SCRIPT_DIR/malware_scan.py' '$FILE' 2>/dev/null" "Multi-engine malware scan"
 
         # Layer 2: Static analysis (if it's code)
         case "$FILE" in

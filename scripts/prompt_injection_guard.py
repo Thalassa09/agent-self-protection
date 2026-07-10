@@ -32,6 +32,7 @@ class C:
     YELLOW = "\033[33m"
     GREEN = "\033[32m"
     CYAN = "\033[36m"
+    BOLD = "\033[1m"
     DIM = "\033[2m"
     RESET = "\033[0m"
 
