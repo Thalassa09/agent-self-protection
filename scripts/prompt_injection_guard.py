@@ -1,30 +1,41 @@
 #!/usr/bin/env python3
 """
 agent-self-protection: prompt_injection_guard.py
-Indirect prompt injection defense.
+Indirect prompt injection & conversation-integrity defense.
 
-Scans text content (web pages, PDFs, fetched files, HTML) for:
+Scans text content (web pages, PDFs, fetched files, HTML, MCP tool
+output) for:
 - Direct injection: "ignore previous instructions", "you are now..."
 - Indirect injection: markdown mimicking user commands, HTML with hidden instructions
 - Smuggled tool calls: JSON inside text that looks like function calls
 - Disguised channels: zero-width Unicode, bidi overrides
 - Suspicious roleplay: "pretend you are...", "in this hypothetical..."
 - Coercion patterns: urgency + authority
+- Role confusion: fake [SYSTEM]/developer speaker tags, fabricated turn boundaries
+- System-prompt extraction attempts: "repeat the text above", "print your instructions"
+- HTML injection: <script>/<iframe>/event handlers/meta-refresh/base64 data: URIs
+- Encoded payloads: base64/hex blobs that decode to injection content (recursive,
+  depth-limited — catches "prompt laundering" through one or two layers of encoding)
+- Unicode confusables: Latin words with Cyrillic/Greek look-alike letters mixed in,
+  used to dodge plain-text regex while rendering identically to the reader
 
 Usage:
     python3 prompt_injection_guard.py page.html
     python3 prompt_injection_guard.py --scan-text "ignore all instructions and..."
     cat fetched.md | python3 prompt_injection_guard.py -
+    python3 prompt_injection_guard.py --scan-text "..." --max-decode-depth 3
 
 Exit codes: 0=clean  1=suspicious  2=malicious
 """
 
 import argparse
+import base64
 import json
 import re
 import sys
+import unicodedata
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 
 class C:
@@ -130,12 +141,143 @@ TOOL_CALL_SMUGGLING = [
     (r'```json\s*\n\s*\{\s*"(?:action|tool|function)"\s*:', "JSON codeblock with action"),
 ]
 
+# System-prompt extraction attempts
+SYSTEM_EXTRACTION_PATTERNS = [
+    (r"\b(?:repeat|print|show|output|leak|expose|copy)(?:\s+(?:me|us|him|her))?\s+(?:the|your)?\s*(?:system\s+)?(?:prompt|instructions?|rules?|directives?)\b",
+     "system prompt leak/leakage attempt"),
+    (r"\b(?:repeat|output|show)\s+(?:the\s+)?(?:text|sentences|lines)\s+(?:above|before|prior)\b",
+     "context replication request"),
+    (r"\bwhat\s+(?:are\s+your|is\s+your)\s+(?:system\s+)?(?:instructions?|directives?|rules?)\b",
+     "system prompt inquiry"),
+]
+
+# HTML injection patterns
+HTML_INJECTION_PATTERNS = [
+    (r"<script\b[^>]*>.*?</script>", "HTML script tag injection"),
+    (r"<iframe\b[^>]*>", "HTML iframe injection"),
+    (r"\bon[a-z]+\s*=\s*[\"'][^\"']*javascript:[^\"']*[\"']", "HTML event handler script"),
+    (r"\bhref\s*=\s*[\"']\s*data:\s*text/html\s*;.*base64\s*,", "HTML base64 data link"),
+    (r"<meta\b[^>]*http-equiv\s*=\s*[\"']refresh[\"']", "HTML meta refresh redirection"),
+]
+
 
 # ──────────────────────────────────────────────────────────────────────
-# Detection
+# Unicode Confusables Detection
 # ──────────────────────────────────────────────────────────────────────
 
-def scan_text(content: str) -> Dict:
+# Mapping of lookalike letters from different script blocks
+# (Cyrillic/Greek letters commonly used to spoof Latin characters)
+LOOKALIKES = {
+    'а': 'a', 'е': 'e', 'і': 'i', 'о': 'o', 'р': 'p', 'с': 'c', 'у': 'y', 'х': 'x',
+    'ѕ': 's', 'ԁ': 'd', 'һ': 'h', 'ј': 'j', 'Ӏ': 'l', 'ո': 'n', '𝖻': 'b', '𝗄': 'k',
+    'α': 'a', 'ο': 'o', 'ρ': 'p', 'ϲ': 'c', 'υ': 'y', 'χ': 'x', 'т': 't', 'м': 'm', 
+    'і': 'i', 'е': 'e'
+}
+
+SUSPICIOUS_LATIN_KEYWORDS = ["system", "ignore", "instruction", "prompt", "rule", "jailbreak", "dan"]
+
+def scan_unicode_confusables(content: str) -> List[Dict]:
+    findings = []
+    # Tokenize content by simple word boundaries
+    words = re.findall(r"\b\w+\b", content)
+    for word in words:
+        # Check if the word is a mixture of Latin and other scripts (Cyrillic/Greek lookalikes)
+        has_latin = False
+        has_non_latin_lookalike = False
+        normalized_chars = []
+        
+        for char in word:
+            name = unicodedata.name(char, "")
+            if "LATIN" in name:
+                has_latin = True
+                normalized_chars.append(char.lower())
+            elif char in LOOKALIKES:
+                has_non_latin_lookalike = True
+                normalized_chars.append(LOOKALIKES[char])
+            else:
+                normalized_chars.append(char.lower())
+                
+        # If it's a mixed-script word containing lookalikes
+        if has_latin and has_non_latin_lookalike:
+            normalized_word = "".join(normalized_chars)
+            # Check if it normalizes to one of our critical keywords
+            for kw in SUSPICIOUS_LATIN_KEYWORDS:
+                if kw in normalized_word:
+                    findings.append({
+                        "label": "Unicode confusable homoglyph spoofing",
+                        "match": word,
+                        "normalized": normalized_word,
+                        "keyword_targeted": kw
+                    })
+                    break
+    return findings
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Recursive Encoded Payloads Decoder
+# ──────────────────────────────────────────────────────────────────────
+
+# Regex pattern matching potential base64 strings (minimum 16 chars long)
+BASE64_PATTERN = re.compile(r"\b[A-Za-z0-9+/]{16,}=*\b")
+# Regex pattern matching hex strings (minimum 32 chars long)
+HEX_PATTERN = re.compile(r"\b[0-9a-fA-F]{32,}\b")
+
+def scan_encoded_payloads(content: str, current_depth: int = 1, max_depth: int = 2) -> List[Dict]:
+    findings = []
+    if current_depth > max_depth:
+        return findings
+
+    # Scan for Base64 blobs
+    for match in BASE64_PATTERN.finditer(content):
+        blob = match.group()
+        try:
+            # Pad if necessary
+            missing_padding = len(blob) % 4
+            if missing_padding:
+                padded_blob = blob + '=' * (4 - missing_padding)
+            else:
+                padded_blob = blob
+                
+            decoded = base64.b64decode(padded_blob, validate=True).decode("utf-8", errors="ignore")
+            # If successfully decoded into a string with alphanumeric tokens
+            if len(decoded.strip()) > 8 and any(c.isalnum() for c in decoded):
+                # Run recursive check on the decoded content
+                nested_findings = scan_text_internal(decoded, current_depth + 1, max_depth)
+                if nested_findings["risk"] > 0:
+                    findings.append({
+                        "label": f"Base64-encoded payload (depth {current_depth})",
+                        "match": blob[:80],
+                        "decoded_preview": decoded[:120].strip().replace("\n", " "),
+                        "nested_risk": nested_findings["risk"]
+                    })
+        except Exception:
+            pass
+
+    # Scan for Hex blobs
+    for match in HEX_PATTERN.finditer(content):
+        blob = match.group()
+        try:
+            decoded = bytes.fromhex(blob).decode("utf-8", errors="ignore")
+            if len(decoded.strip()) > 8 and any(c.isalnum() for c in decoded):
+                nested_findings = scan_text_internal(decoded, current_depth + 1, max_depth)
+                if nested_findings["risk"] > 0:
+                    findings.append({
+                        "label": f"Hex-encoded payload (depth {current_depth})",
+                        "match": blob[:80],
+                        "decoded_preview": decoded[:120].strip().replace("\n", " "),
+                        "nested_risk": nested_findings["risk"]
+                    })
+        except Exception:
+            pass
+
+    return findings
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Unified Scan Logic
+# ──────────────────────────────────────────────────────────────────────
+
+def scan_text_internal(content: str, current_depth: int = 1, max_depth: int = 2) -> Dict:
     findings = {
         "direct": [],
         "role_markers": [],
@@ -143,6 +285,10 @@ def scan_text(content: str) -> Dict:
         "disguised_channels": [],
         "coercion": [],
         "tool_call_smuggling": [],
+        "system_extraction": [],
+        "html_injection": [],
+        "unicode_confusables": [],
+        "encoded_payloads": [],
         "verdict": "clean",
         "risk": 0,
     }
@@ -202,6 +348,30 @@ def scan_text(content: str) -> Dict:
                 "line": content[:match.start()].count("\n") + 1,
             })
 
+    # System extraction
+    for pattern, label in SYSTEM_EXTRACTION_PATTERNS:
+        for match in re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE):
+            findings["system_extraction"].append({
+                "label": label,
+                "match": match.group()[:80],
+                "line": content[:match.start()].count("\n") + 1,
+            })
+
+    # HTML Injection
+    for pattern, label in HTML_INJECTION_PATTERNS:
+        for match in re.finditer(pattern, content, re.IGNORECASE | re.DOTALL):
+            findings["html_injection"].append({
+                "label": label,
+                "match": match.group()[:80],
+                "line": content[:match.start()].count("\n") + 1,
+            })
+
+    # Unicode Confusables
+    findings["unicode_confusables"] = scan_unicode_confusables(content)
+
+    # Recursive Encoded Payloads
+    findings["encoded_payloads"] = scan_encoded_payloads(content, current_depth, max_depth)
+
     # Scoring
     score = 0
     if findings["direct"]:
@@ -212,15 +382,30 @@ def scan_text(content: str) -> Dict:
         score = max(score, 2)
     if findings["smuggling"]:
         score = max(score, 2)
+    if findings["system_extraction"]:
+        score = max(score, 2)
+    if findings["html_injection"]:
+        score = max(score, 2)
+    if findings["unicode_confusables"]:
+        score = max(score, 2)
+    if any(item["nested_risk"] >= 2 for item in findings["encoded_payloads"]):
+        score = max(score, 2)
+        
     if findings["coercion"]:
         score = max(score, 1)
     if findings["disguised_channels"]:
+        score = max(score, 1)
+    if any(item["nested_risk"] == 1 for item in findings["encoded_payloads"]):
         score = max(score, 1)
 
     findings["risk"] = score
     findings["verdict"] = "malicious" if score >= 2 else ("suspicious" if score >= 1 else "clean")
 
     return findings
+
+
+def scan_text(content: str, max_depth: int = 2) -> Dict:
+    return scan_text_internal(content, current_depth=1, max_depth=max_depth)
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -248,6 +433,10 @@ def print_findings(findings: Dict, source: str) -> int:
         ("Direct Injection", "direct", red),
         ("Role Markers", "role_markers", red),
         ("Smuggling", "smuggling", red),
+        ("System-Prompt Extraction", "system_extraction", red),
+        ("HTML Injection", "html_injection", red),
+        ("Unicode Confusables", "unicode_confusables", red),
+        ("Encoded Payloads", "encoded_payloads", red),
         ("Disguised Channels", "disguised_channels", yellow),
         ("Coercion", "coercion", yellow),
         ("Tool-Call Smuggling", "tool_call_smuggling", red),
@@ -263,6 +452,14 @@ def print_findings(findings: Dict, source: str) -> int:
                         print(f"           {C.DIM}{item['match']}{C.RESET}")
                 elif "char" in item:
                     print(f"      {item['char']} ({item['label']}): {item['count']} occurrences")
+                elif "normalized" in item:
+                    print(f"      homoglyph target: {item['keyword_targeted']}")
+                    print(f"           original:   {C.BOLD}{item['match']}{C.RESET}")
+                    print(f"           normalized: {item['normalized']}")
+                elif "decoded_preview" in item:
+                    print(f"      type: {item['label']}")
+                    print(f"           encoded: {C.DIM}{item['match'][:50]}...{C.RESET}")
+                    print(f"           decoded: {C.BOLD}{item['decoded_preview'][:80]}...{C.RESET}")
 
     return risk
 
@@ -272,16 +469,17 @@ def print_findings(findings: Dict, source: str) -> int:
 # ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Prompt-injection guard")
+    parser = argparse.ArgumentParser(description="Prompt-injection guard (Upgraded)")
     parser.add_argument("path", nargs="?", help="File path or '-' for stdin")
     parser.add_argument("--scan-text", help="Scan inline text")
+    parser.add_argument("--max-decode-depth", type=int, default=2, help="Max depth for recursive decoding scan")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     max_risk = 0
 
     if args.scan_text:
-        result = scan_text(args.scan_text)
+        result = scan_text(args.scan_text, max_depth=args.max_decode_depth)
         result["source"] = "<inline>"
         if args.json:
             print(json.dumps(result, indent=2))
@@ -289,7 +487,7 @@ def main():
             max_risk = print_findings(result, "<inline text>")
     elif args.path == "-" or not args.path:
         content = sys.stdin.read()
-        result = scan_text(content)
+        result = scan_text(content, max_depth=args.max_decode_depth)
         result["source"] = "<stdin>"
         if args.json:
             print(json.dumps(result, indent=2))
@@ -305,7 +503,7 @@ def main():
         except Exception as e:
             print(red(f"Read error: {e}"))
             sys.exit(2)
-        result = scan_text(content)
+        result = scan_text(content, max_depth=args.max_decode_depth)
         result["source"] = str(path)
         if args.json:
             print(json.dumps(result, indent=2))
